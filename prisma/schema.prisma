@@ -1,0 +1,288 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+enum SplitType {
+  EQUAL
+  EXACT
+  PERCENT
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  role          Role      @default(MEMBER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Better Auth Relations
+  sessions      Session[]
+  accounts      Account[]
+
+  // Application Relations
+  createdGroups      Group[]          @relation("GroupCreator")
+  groupMemberships   GroupMember[]
+  paidExpenses       Expense[]        @relation("ExpensePayer")
+  expenseShares      ExpenseShare[]
+  settlementsPaid    Settlement[]     @relation("SettlementPayer")
+  settlementsReceived Settlement[]    @relation("SettlementReceiver")
+  auditLogs          AuditLog[]
+  transactions       Transaction[]
+  supportRequests    SupportRequest[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+model Group {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  currency    String        @default("INR")
+  createdById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  createdBy   User          @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  members     GroupMember[]
+  expenses    Expense[]
+  settlements Settlement[]
+  auditLogs   AuditLog[]
+
+  @@index([createdById])
+  @@map("groups")
+}
+
+model GroupMember {
+  id       String   @id @default(cuid())
+  groupId  String
+  userId   String
+  role     String   @default("MEMBER")
+  joinedAt DateTime @default(now())
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+model Expense {
+  id          String         @id @default(cuid())
+  groupId     String
+  paidById    String
+  description String
+  category    String         @default("GENERAL")
+  amount      Int            // in integer paise
+  splitType   SplitType      @default(EQUAL)
+  date        DateTime       @default(now())
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  group  Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paidBy User           @relation("ExpensePayer", fields: [paidById], references: [id], onDelete: Cascade)
+  shares ExpenseShare[]
+
+  @@index([groupId])
+  @@index([paidById])
+  @@index([date])
+  @@map("expenses")
+}
+
+model ExpenseShare {
+  id         String    @id @default(cuid())
+  expenseId  String
+  userId     String
+  amount     Int       // in integer paise
+  percentage Float?
+  createdAt  DateTime  @default(now())
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, userId])
+  @@index([expenseId])
+  @@index([userId])
+  @@map("expense_shares")
+}
+
+model Settlement {
+  id         String   @id @default(cuid())
+  groupId    String
+  payerId    String
+  receiverId String
+  amount     Int      // in integer paise
+  note       String?
+  date       DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payer    User  @relation("SettlementPayer", fields: [payerId], references: [id], onDelete: Cascade)
+  receiver User  @relation("SettlementReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@index([payerId])
+  @@index([receiverId])
+  @@map("settlements")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  groupId    String?
+  action     String   // e.g., EXPENSE_CREATED, SETTLEMENT_RECORDED, USER_REGISTERED, GROUP_CREATED
+  entityType String   // e.g., EXPENSE, SETTLEMENT, GROUP, USER
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  group Group? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model EmailEvent {
+  id        String   @id @default(cuid())
+  type      String   // e.g. email.delivered, email.bounced, email.complained, email.opened, email.sent
+  recipient String
+  subject   String
+  resendId  String?
+  metadata  Json?
+  timestamp DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([recipient])
+  @@index([resendId])
+  @@index([timestamp])
+  @@map("email_events")
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+  TRANSFER
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+model Transaction {
+  id          String            @id @default(cuid())
+  userId      String
+  type        TransactionType
+  status      TransactionStatus @default(PENDING)
+  amount      Float             // in rupees
+  description String
+  reference   String?           @unique
+  metadata    Json?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+enum SupportStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model SupportRequest {
+  id          String        @id @default(cuid())
+  userId      String
+  subject     String
+  message     String        @db.Text
+  status      SupportStatus @default(OPEN)
+  adminNote   String?       @db.Text
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("support_requests")
+}

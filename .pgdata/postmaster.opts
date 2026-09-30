@@ -1,0 +1,1 @@
+/Users/poojan/fst-project1/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres "-D" "./.pgdata" "-p" "5432"
